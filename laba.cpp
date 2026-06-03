@@ -10,9 +10,11 @@ extern "C" {
 
 
 
+//=========================================
+// 1. Реализовать контейнер с итератором на основе базы данных SQLite для выбранного семейства объектов.
+//=========================================
 
-
-// ЭТАП 1: ПАТТЕРНЫ И БАЗОВЫЕ КЛАССЫ
+// ПАТТЕРНЫ И БАЗОВЫЕ КЛАССЫ
 
 // 1. Паттерн "Стратегия"
 // Интерфейс для стратегии экспорта данных
@@ -111,7 +113,7 @@ protected:
 
 
 
-// ЭТАП 2: УМНЫЕ УКАЗАТЕЛИ ДЛЯ SQLITE
+// УМНЫЕ УКАЗАТЕЛИ ДЛЯ SQLITE
 
 // Функторы для автоматического закрытия ресурсов базы данных
 struct SQLiteDeleter {
@@ -131,7 +133,7 @@ using StmtPtr = std::shared_ptr<sqlite3_stmt>;
 
 
 
-// ЭТАП 3: ИТЕРАТОР И КОНТЕЙНЕР БАЗЫ ДАННЫХ
+// ИТЕРАТОР И КОНТЕЙНЕР БАЗЫ ДАННЫХ
 
 // Итератор, который "шагает" по строкам SQLite
 class DbIterator {
@@ -239,41 +241,142 @@ public:
 
 
 
+//==================================================================================
+//2. Реализовать взаимодействие с объектами выбранного семейства с использованием паттерна "Стратегия". Интерфейс существующих функций менять запрещено!
+//==================================================================================
+
+// ПАТТЕРН "СТРАТЕГИЯ"
+
+// Интерфейс стратегии взаимодействия. 
+// Принимает константную ссылку на базовый класс, не требуя изменения его интерфейса.
+class IWorkflowStrategy {
+public:
+    virtual void interact(const Publication& pub) const = 0;
+    virtual ~IWorkflowStrategy() = default;
+};
+
+// Конкретная стратегия 1: "Полный аудит"
+// Взаимодействует с объектом, вызывая полный отчет на экран и экспорт данных.
+class FullAuditStrategy : public IWorkflowStrategy {
+public:
+    void interact(const Publication& pub) const override {
+        std::cout << ">>> [AUDIT START]\n";
+        pub.printReport(); // Использование существующего метода
+        pub.doExport();    // Использование существующего метода
+        std::cout << "<<< [AUDIT END]\n\n";
+    }
+};
+
+// Конкретная стратегия 2: Тихий экспорт
+// Взаимодействует с объектом скрытно, вызывая только экспорт данных.
+class SilentBackupStrategy : public IWorkflowStrategy {
+public:
+    void interact(const Publication& pub) const override {
+        // Не вызываем printReport(), делаем только экспорт
+        std::cout << "[BACKUP SYSTEM] Processing data... ";
+        pub.doExport(); 
+    }
+};
+
+
+
+// КОНТЕКСТ ДЛЯ ВЫПОЛНЕНИЯ СТРАТЕГИИ
+
+class LibraryProcessor {
+private:
+    std::shared_ptr<IWorkflowStrategy> strategy;
+
+public:
+    // Установка стратегии в рантайме (динамическое изменение поведения)
+    void setStrategy(std::shared_ptr<IWorkflowStrategy> newStrategy) {
+        strategy = std::move(newStrategy);
+    }
+
+    // Выполнение стратегии над всем контейнером.
+    // Обратите внимание: мы используем итератор контейнера из Задания 1, 
+    // не меняя логику работы БД.
+    void processAll(SQLiteContainer& container) const {
+        if (!strategy) {
+            std::cerr << "Strategy is not set!\n";
+            return;
+        }
+
+        for (auto& pub : container) {
+            // Делегирование взаимодействия выбранной стратегии
+            strategy->interact(pub); 
+        }
+    }
+};
 
 
 
 
-
-// ЭТАП 4: ГЛАВНАЯ ФУНКЦИЯ
+// ГЛАВНАЯ ФУНКЦИЯ
 
 int main() {
     SetConsoleOutputCP(CP_UTF8); 
     SetConsoleCP(CP_UTF8);
+    SQLiteContainer container("library.db");    
+
+    // //==================================================================================
+    // // 1. Реализовать контейнер с итератором на основе базы данных SQLite для выбранного семейства объектов.
+    // //==================================================================================
+
+    // try {
+    //     std::cout << "[SYSTEM] Инициализация базы данных...\n";
+    //     // Для демонстрации добавим записи (в реальности они сохранятся в файле library.db)
+    //     container.add("Book", "The C++ Programming Language", "Bjarne Stroustrup");
+    //     container.add("Magazine", "Linux Format", "Issue 250");
+    //     container.add("Book", "Design Patterns", "GoF");
+
+    //     std::cout << "[SYSTEM] Чтение через итератор БД:\n\n";
+
+    //     // Использование реализованного итератора в range-based for цикле
+    //     for (auto& pub : container) {
+    //         // Вызов Шаблонного метода
+    //         pub.printReport(); 
+            
+    //         // Вызов метода, использующего паттерн Стратегия
+    //         pub.doExport();    
+            
+    //         std::cout << "\n";
+    //     }
+    // }
+    // catch (const std::exception& e) {
+    //     std::cerr << "Error: " << e.what() << "\n";
+    // }
+
+    //==================================================================================
+    //2. Реализовать взаимодействие с объектами выбранного семейства с использованием паттерна "Стратегия". Интерфейс существующих функций менять запрещено!
+    //==================================================================================
 
     try {
-        std::cout << "[SYSTEM] Инициализация базы данных...\n";
-        SQLiteContainer container("library.db");
+        // Если БД пустая (при первом запуске), можно добавить пару записей
+        container.add("Book", "Clean Code", "Robert Martin");
+        container.add("Magazine", "Wired", "Issue 12");
 
-        // Для демонстрации добавим записи (в реальности они сохранятся в файле library.db)
-        container.add("Book", "The C++ Programming Language", "Bjarne Stroustrup");
-        container.add("Magazine", "Linux Format", "Issue 250");
-        container.add("Book", "Design Patterns", "GoF");
+        // 2. Создание процессора
+        LibraryProcessor processor;
 
-        std::cout << "[SYSTEM] Чтение через итератор БД:\n\n";
+        std::cout << "============================================\n";
+        std::cout << "СЦЕНАРИЙ 1: ПРИМЕНЕНИЕ СТРАТЕГИИ ПОЛНОГО АУДИТА\n";
+        std::cout << "============================================\n";
+        
+        // Устанавливаем стратегию аудита
+        processor.setStrategy(std::make_shared<FullAuditStrategy>());
+        processor.processAll(container);
 
-        // Использование реализованного итератора в range-based for цикле
-        for (auto& pub : container) {
-            // Вызов Шаблонного метода
-            pub.printReport(); 
-            
-            // Вызов метода, использующего паттерн Стратегия
-            pub.doExport();    
-            
-            std::cout << "\n";
-        }
+        std::cout << "\n============================================\n";
+        std::cout << "СЦЕНАРИЙ 2: ПРИМЕНЕНИЕ СТРАТЕГИИ ТИХОГО БЭКАПА\n";
+        std::cout << "============================================\n";
+        
+        // Динамически меняем стратегию на тихий бэкап в процессе выполнения
+        processor.setStrategy(std::make_shared<SilentBackupStrategy>());
+        processor.processAll(container);
+
     }
     catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "Exception caught: " << e.what() << "\n";
     }
 
     return 0;
